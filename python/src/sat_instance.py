@@ -42,12 +42,12 @@ class SATInstance:
         val = self.assignment[v]
         return val if lit > 0 else not val
     
-    def assign(self, lit: int):
+    def assign(self, lit: int): # does not deal with watched literal
         v = abs(lit)
         self.assignment[v] = (lit > 0)
         self.unassigned_vars.discard(v)
 
-    def unassign(self, lit: int):
+    def unassign(self, lit: int): # no propagation needed
         v = abs(lit)
         del self.assignment[v]
         self.unassigned_vars.add(v)

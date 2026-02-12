@@ -4,44 +4,73 @@ from argparse import ArgumentParser
 from dimacs_parser import DimacsParser
 from model_timer import Timer
 from sat_instance import SATInstance
+from collections import deque
 
-def unit_propagation(instance):
-    ''' Returns: instance, result, solution'''
-    solution = dict()
+def propagate_literal(instance, literal, unit_queue):
+    # First check if the literal is already assigned to False
+    if instance.lit_value(literal) is False:
+        return False
+    elif instance.lit_value(literal) is True:
+        return True
 
-    # Initial set of unit literals
-    unit_literals = set()
+    instance.assign(literal)
+    clause_check_idxs = list(instance.watch_list.get(-literal, [])) # copy
+
+    for ci in clause_check_idxs:
+        # Get literal and value of other watched literal
+        clause = instance.clauses[ci]
+        if clause.lits[clause.w1] == -literal:
+            other_watch_idx = clause.w2
+        else:
+            other_watch_idx = clause.w1
+        other_watch_lit = clause.lits[other_watch_idx]
+        other_watch_val = instance.lit_value(other_watch_lit)
+
+        if other_watch_val is True: # clause is already satisfied, no need to move watch
+            continue
+
+        new_i = None
+        for i, lit in enumerate(clause.lits):
+            if i == other_watch_idx:
+                continue
+            if instance.lit_value(lit) is not False: 
+                new_i = i # i != watch_idx by definition of watch_idx
+                break
+
+        if new_i is not None: # found new watch
+            # Update watched literals + watch list
+            clause.w1 = other_watch_idx
+            clause.w2 = new_i
+            instance.watch_list[-literal].remove(ci)
+            instance.watch_list.setdefault(clause.lits[new_i], []).append(ci)
+        else:
+            # No new watch found
+            if other_watch_val is False:  # Conflict
+                return False
+            unit_queue.append(other_watch_lit) # Otherwise unit (in place edit)
+
+    return True
+
+
+def find_init_unit_literals(instance):
+    unit_queue = deque()
     for clause in instance.clauses:
-        if len(clause) == 1: 
-            unit_literals.add(next(iter(clause)))
-    
-    # Remove clauses until no more unit literals are found
-    while unit_literals:
-        literal = unit_literals.pop()
-        # Assign the literal to True and simplify the instance
-        # Remove clauses satisfied by this literal
-        instance.clauses = [clause for clause in instance.clauses if literal not in clause]
-        # Remove the negation of the literal from remaining clauses
-        for clause in instance.clauses:
-            if -literal in clause:
-                clause.remove(-literal)
-                # Check 0 and 1 case
-                if len(clause) == 0:
-                    # If we have an empty clause, the instance is unsatisfiable
-                    return None, "UNSAT", None
-                elif len(clause) == 1:
-                    # If we have a new unit clause, add it to the set of unit literals
-                    unit_literals.add(next(iter(clause)))
-
-        solution[abs(literal)] = literal > 0
-
-        instance.vars.remove(abs(literal))
-
-    return instance, None, solution
+        if len(clause.lits) == 1: 
+            unit_queue.append(clause.lits[0])
+    return unit_queue
 
 
-def pure_literal_elimination(instance):
-    ''' Returns: instance, result, solution'''
+def unit_propagation(instance, unit_queue):
+    ''' Returns: True if no conflict found, False if conflict found'''
+    while unit_queue:
+        literal = unit_queue.popleft()
+        if not propagate_literal(instance, literal, unit_queue):
+            return False 
+    return True 
+
+
+def pure_literal_elimination(instance, unit_queue):
+    ''' Returns: True if no conflict found, False if conflict found'''
     solution = dict()
 
     cur_literals = set.union(*instance.clauses) if instance.clauses else set()
@@ -60,40 +89,6 @@ def pure_literal_elimination(instance):
             one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
 
     return instance, None, solution
-    
-
-def reduce_with_literal(instance, literal):
-    ''' Assume var is removed from instance.vars by caller'''
-    ''' Doesn't mutate instance, returns a copy'''
-    ''' Returns: instance, result, solution'''
-
-    # Copy vars and drop the assigned variable
-    new_vars = set(instance.vars)
-    new_vars.discard(abs(literal))
-
-    # Deep-copy clauses (copy each set!)
-    new_clauses = []
-    for clause in instance.clauses:
-        if literal in clause:
-            # clause satisfied -> drop it
-            continue
-
-        new_clause = set(clause)  # copy
-        new_clause.discard(-literal)
-
-        if len(new_clause) == 0:
-            return None, "UNSAT", None
-
-        new_clauses.append(new_clause)
-
-    new_instance = SATInstance(
-        numVars=len(new_vars),
-        numClauses=len(new_clauses),
-        vars=new_vars,
-        clauses=new_clauses,
-    )
-
-    return new_instance, None, {abs(literal): literal > 0}
 
 
 def sat_solver(instance):
@@ -102,8 +97,10 @@ def sat_solver(instance):
         return "SAT", solution
 
     # Run UP and PLE while possible
+    unit_literals = find_init_unit_literals(instance)
     while True: 
-        instance, result, up_solution = unit_propagation(instance)
+        instance, result, up_solution = unit_propagation(instance, unit_literals)
+        unit_literals = None # Don't reuse the same set after the first round
         if result == "UNSAT":
             return "UNSAT", None
         solution.update(up_solution)
