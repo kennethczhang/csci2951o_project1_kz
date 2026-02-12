@@ -22,6 +22,7 @@ class SATInstance:
     watch_list: Dict[int, List[int]] = field(default_factory=dict)
     assignment: Dict[int, bool] = field(default_factory=dict)
     unassigned_vars: Set[int] = field(default_factory=set)
+    # lit_count: Dict[int, int] = field(default_factory=dict)
 
     def add_clause(self, clause: Clause):
         self.clauses.append(clause)
@@ -35,6 +36,9 @@ class SATInstance:
 
         self.unassigned_vars.update(abs(lit) for lit in clause.lits)
 
+        # for lit in clause.lits:
+        #     self.lit_count[lit] = self.lit_count.get(lit, 0) + 1
+
     def lit_value(self, lit: int):
         v = abs(lit)
         if v not in self.assignment:
@@ -42,18 +46,25 @@ class SATInstance:
         val = self.assignment[v]
         return val if lit > 0 else not val
     
-    def assign(self, lit: int): # does not deal with watched literal
+    def assign(self, lit: int, trail): 
         v = abs(lit)
         self.assignment[v] = (lit > 0)
         self.unassigned_vars.discard(v)
+        trail.append(lit)
 
-    def unassign(self, lit: int): # no propagation needed
+    def unassign(self, lit: int):
         v = abs(lit)
         del self.assignment[v]
         self.unassigned_vars.add(v)
 
     def is_satisfied(self):
         return len(self.unassigned_vars) == 0
+        # TODO: i thought if len(self.unassigned_vars) == 0 then its T for watched literals
+        for clause in self.clauses:
+            if not any(self.lit_value(lit) is True for lit in clause.lits):
+                return False
+        return True
+
 
     def __str__(self):
         numVars = len(self.unassigned_vars) + len(self.assignment)

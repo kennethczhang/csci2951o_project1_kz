@@ -6,14 +6,14 @@ from model_timer import Timer
 from sat_instance import SATInstance
 from collections import deque
 
-def propagate_literal(instance, literal, unit_queue):
+def propagate_literal(instance, literal, unit_queue, trail):
     # First check if the literal is already assigned to False
     if instance.lit_value(literal) is False:
         return False
     elif instance.lit_value(literal) is True:
         return True
 
-    instance.assign(literal)
+    instance.assign(literal, trail)
     clause_check_idxs = list(instance.watch_list.get(-literal, [])) # copy
 
     for ci in clause_check_idxs:
@@ -60,77 +60,46 @@ def find_init_unit_literals(instance):
     return unit_queue
 
 
-def unit_propagation(instance, unit_queue):
+def unit_propagation(instance, unit_queue, trail):
     ''' Returns: True if no conflict found, False if conflict found'''
     while unit_queue:
         literal = unit_queue.popleft()
-        if not propagate_literal(instance, literal, unit_queue):
+        if not propagate_literal(instance, literal, unit_queue, trail):
             return False 
     return True 
 
 
-def pure_literal_elimination(instance, unit_queue):
-    ''' Returns: True if no conflict found, False if conflict found'''
-    solution = dict()
-
-    cur_literals = set.union(*instance.clauses) if instance.clauses else set()
-    one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
-    while one_polarity_literals:
-        literal = one_polarity_literals.pop()
-        # Assign the literal to True and remove clauses satisfied by this literal
-        instance.clauses = [clause for clause in instance.clauses if literal not in clause]
-        instance.vars.remove(abs(literal)) 
-
-        solution[abs(literal)] = literal > 0
-
-        if not one_polarity_literals:
-            # Recompute the set of literals and one-polarity literals after simplification
-            cur_literals = set.union(*instance.clauses) if instance.clauses else set()
-            one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
-
-    return instance, None, solution
-
-
-def sat_solver(instance):
-    solution = dict() # TODO: add a stack for backtracing support
-    if len(instance.clauses) == 0:
-        return "SAT", solution
-
-    # Run UP and PLE while possible
-    unit_literals = find_init_unit_literals(instance)
-    while True: 
-        instance, result, up_solution = unit_propagation(instance, unit_literals)
-        unit_literals = None # Don't reuse the same set after the first round
-        if result == "UNSAT":
-            return "UNSAT", None
-        solution.update(up_solution)
-        if len(instance.clauses) == 0:
-            return "SAT", solution
-        
-        instance, result, ple_solution = pure_literal_elimination(instance)
-        solution.update(ple_solution)
-        if len(instance.clauses) == 0:
-            return "SAT", solution
-         
-        if not up_solution and not ple_solution:
-            break
-        
-
-    # Search for a variable to assign and backtrack if necessary
+def sat_solver(instance, unit_queue=None, trail=None):
+    if instance.is_satisfied():
+        return "SAT", instance.assignment
     
-    orig_instance = instance
-    var = instance.vars.pop()
+    if unit_queue is None:
+        unit_queue = find_init_unit_literals(instance)
+    if trail is None:
+        trail = []
+    
+    # Run UP just once
+    result = unit_propagation(instance, unit_queue, trail)
+    if not result:
+        return "UNSAT", None
+    if instance.is_satisfied():
+        return "SAT", instance.assignment
 
-    for lit, value in ((var, True), (-var, False)):
-        reduced, result, _ = reduce_with_literal(orig_instance, lit)
-        if result == "UNSAT":
-            continue
+    # If we reach here, we need to make a decision
+    # Search for a variable to assign and backtrack if necessary
+    var = next(iter(instance.unassigned_vars))
+    for lit in (var, -var):
+        level = len(trail) # current decision level 
+        unit_queue = deque() # reset unit literals for new branch
 
-        sub_result, sub_sol = sat_solver(reduced)
-        if sub_result == "SAT":
-            solution[var] = value
-            solution.update(sub_sol)
-            return "SAT", solution
+        if propagate_literal(instance, lit, unit_queue, trail):
+            result, sol = sat_solver(instance, unit_queue, trail)
+            if result == "SAT":
+                return "SAT", sol
+        
+        # Backtrack because no solution
+        while len(trail) > level:
+            instance.unassign(trail.pop())
 
     return "UNSAT", None
 
@@ -174,3 +143,33 @@ if __name__ == "__main__":
     parser.add_argument("input_file", type=str)
     args = parser.parse_args()
     main(args)
+
+
+
+
+# def pure_literal_elimination(instance, unit_queue):
+#     ''' Returns: True if no conflict found, False if conflict found'''
+
+    
+#     solution = dict()
+
+#     cur_literals = set.union(*instance.clauses) if instance.clauses else set()
+#     one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
+#     while one_polarity_literals:
+#         literal = one_polarity_literals.pop()
+#         # Assign the literal to True and remove clauses satisfied by this literal
+#         instance.clauses = [clause for clause in instance.clauses if literal not in clause]
+#         instance.vars.remove(abs(literal)) 
+#         solution[abs(literal)] = literal > 0
+
+#         if not one_polarity_literals:
+#             # Recompute the set of literals and one-polarity literals after simplification
+#             cur_literals = set.union(*instance.clauses) if instance.clauses else set()
+#             one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
+
+#     return instance, None, solution
+
+        # instance, result, ple_solution = pure_literal_elimination(instance)
+        # solution.update(ple_solution)
+        # if len(instance.clauses) == 0:
+        #     return "SAT", solution
