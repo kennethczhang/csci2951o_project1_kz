@@ -35,6 +35,26 @@ class SATInstance:
 
         self.unassigned_vars.update(abs(lit) for lit in clause.lits)
 
+    def lit_value(self, lit: int):
+        v = abs(lit)
+        if v not in self.assignment:
+            return None
+        val = self.assignment[v]
+        return val if lit > 0 else not val
+    
+    def assign(self, lit: int):
+        v = abs(lit)
+        self.assignment[v] = (lit > 0)
+        self.unassigned_vars.discard(v)
+
+    def unassign(self, lit: int):
+        v = abs(lit)
+        del self.assignment[v]
+        self.unassigned_vars.add(v)
+
+    def is_satisfied(self):
+        return len(self.unassigned_vars) == 0
+
     def __str__(self):
         numVars = len(self.unassigned_vars) + len(self.assignment)
         numClauses = len(self.clauses)

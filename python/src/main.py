@@ -36,8 +36,6 @@ def unit_propagation(instance):
         solution[abs(literal)] = literal > 0
 
         instance.vars.remove(abs(literal))
-        instance.numClauses = len(instance.clauses)
-        instance.numVars = len(instance.vars) # should be just -1 from before
 
     return instance, None, solution
 
@@ -53,8 +51,6 @@ def pure_literal_elimination(instance):
         # Assign the literal to True and remove clauses satisfied by this literal
         instance.clauses = [clause for clause in instance.clauses if literal not in clause]
         instance.vars.remove(abs(literal)) 
-        instance.numClauses = len(instance.clauses)
-        instance.numVars = len(instance.vars) # should be just -1 from before
 
         solution[abs(literal)] = literal > 0
 
