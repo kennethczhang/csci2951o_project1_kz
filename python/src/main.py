@@ -101,7 +101,7 @@ def reduce_with_literal(instance, literal):
 
 
 def sat_solver(instance):
-    solution = dict()
+    solution = dict() # TODO: add a stack for backtracing support
     if len(instance.clauses) == 0:
         return "SAT", solution
 
@@ -114,56 +114,33 @@ def sat_solver(instance):
         if len(instance.clauses) == 0:
             return "SAT", solution
         
-        # if up_solution:
-            # print("After UP:" + str(up_solution))
-            # print("Remaining instance: " + str(instance))
-
         instance, result, ple_solution = pure_literal_elimination(instance)
         solution.update(ple_solution)
         if len(instance.clauses) == 0:
             return "SAT", solution
-        
-        # if ple_solution:
-            # print("After PLE:" + str(ple_solution))
-            # print("Remaining instance: " + str(instance))
-        
+         
         if not up_solution and not ple_solution:
             break
-        # print(up_solution)
-        # print(ple_solution)
         
 
     # Search for a variable to assign and backtrack if necessary
     
     orig_instance = instance
     var = instance.vars.pop()
-    # print(f"Trying variable: {var}")
-    # print(instance)
-    
-    # Try positive
-    instance, result, _ = reduce_with_literal(orig_instance, var)
-    # print(f"After assigning {var}: positive")
 
-    if result != "UNSAT":
-        var_p_result, var_p_solution = sat_solver(instance)
-        if var_p_result == "SAT":
-            solution[var] = True
-            solution.update(var_p_solution)
-            return "SAT", solution
-        
-    # If no sol, try negative
-    instance, result, _ = reduce_with_literal(orig_instance, -var)
-    # print(f"After assigning {var}: negative")
-    # print(instance)
+    for lit, value in ((var, True), (-var, False)):
+        reduced, result, _ = reduce_with_literal(orig_instance, lit)
+        if result == "UNSAT":
+            continue
 
-    if result != "UNSAT":
-        var_n_result, var_n_solution = sat_solver(instance)
-        if var_n_result == "SAT":
-            solution[var] = False
-            solution.update(var_n_solution)
+        sub_result, sub_sol = sat_solver(reduced)
+        if sub_result == "SAT":
+            solution[var] = value
+            solution.update(sub_sol)
             return "SAT", solution
 
     return "UNSAT", None
+
 
 def main(args):
     input_file = args.input_file

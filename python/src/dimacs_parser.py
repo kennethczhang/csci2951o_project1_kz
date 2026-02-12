@@ -1,4 +1,4 @@
-from sat_instance import SATInstance
+from sat_instance import Clause, SATInstance
 
 class DimacsParser:
     @staticmethod
@@ -31,13 +31,15 @@ class DimacsParser:
                 print("Error: DIMACS file format is not cnf")
                 return None
                 
-            num_vars = int(tokens[2])
-            num_clauses = int(tokens[3])
-            sat_instance = SATInstance(num_vars, num_clauses)
+            # num_vars = int(tokens[2])
+            # num_clauses = int(tokens[3])
+            # sat_instance = SATInstance(num_vars, num_clauses)
             
             # Parse clauses from the rest of the file
             # We already consumed lines up to the problem line.
             # We need to process the rest of the lines.
+
+            sat_instance = SATInstance()
             
             clause_lines = list(iterator)
             
@@ -51,20 +53,21 @@ class DimacsParser:
 
             token_stream = token_generator()
             
-            current_clause = set()
+            current_clause = []
+
             for token in token_stream:
                 if token == '0':
                     # End of clause
                     if current_clause: # Avoid empty clauses if 0 is standalone or repeated
-                        sat_instance.add_clause(current_clause)
-                    current_clause = set()
+                        clause_obj = Clause(current_clause.copy())
+                        sat_instance.add_clause(clause_obj)
+                    current_clause = []
                 elif token == '%':
                     # End of file marker
                     break 
                 else:
                     literal = int(token)
-                    current_clause.add(literal)
-                    sat_instance.add_variable(literal)
+                    current_clause.append(literal)
                     
             return sat_instance
 
