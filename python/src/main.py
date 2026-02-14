@@ -133,7 +133,7 @@ def main(args):
         "Instance": filename,
         "Time": f"{timer.getTime():.2f}",
         "Result": result,
-        "Solution": solution,
+        "Solution": ' '.join(f"{lit} {str(solution[lit]).lower()}" for lit in sorted(solution.keys())),
     }
     
     print(json.dumps(printSol))
