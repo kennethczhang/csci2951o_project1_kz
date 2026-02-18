@@ -46,11 +46,10 @@ class SATInstance:
         val = self.assignment[v]
         return val if lit > 0 else not val
     
-    def assign(self, lit: int, trail): 
+    def assign(self, lit: int): 
         v = abs(lit)
         self.assignment[v] = (lit > 0)
         self.unassigned_vars.discard(v)
-        trail.append(lit)
 
     def unassign(self, lit: int):
         v = abs(lit)

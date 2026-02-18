@@ -4,16 +4,21 @@ from argparse import ArgumentParser
 from dimacs_parser import DimacsParser
 from model_timer import Timer
 from sat_instance import SATInstance
+from backtracker import BackTracker
 from collections import deque
 
-def propagate_literal(instance, literal, unit_queue, trail):
+def propagate_literal(instance, literal, unit_queue, bt, reason=None):
     # First check if the literal is already assigned to False
     if instance.lit_value(literal) is False:
         return False
     elif instance.lit_value(literal) is True:
         return True
 
-    instance.assign(literal, trail)
+    instance.assign(literal)
+    if reason == None:
+        bt.add_decision(literal)
+    else:
+        bt.add_propagation(literal, reason)
     clause_check_idxs = list(instance.watch_list.get(-literal, [])) # copy
 
     for ci in clause_check_idxs:
@@ -47,39 +52,39 @@ def propagate_literal(instance, literal, unit_queue, trail):
             # No new watch found
             if other_watch_val is False:  # Conflict
                 return False
-            unit_queue.append(other_watch_lit) # Otherwise unit (in place edit)
+            unit_queue.append((other_watch_lit, ci)) # Otherwise unit (in place edit)
 
     return True
 
 
 def find_init_unit_literals(instance):
     unit_queue = deque()
-    for clause in instance.clauses:
+    for idx, clause in enumerate(instance.clauses):
         if len(clause.lits) == 1: 
-            unit_queue.append(clause.lits[0])
+            unit_queue.append((clause.lits[0], idx))
     return unit_queue
 
 
-def unit_propagation(instance, unit_queue, trail):
+def unit_propagation(instance, unit_queue, bt):
     ''' Returns: True if no conflict found, False if conflict found'''
     while unit_queue:
-        literal = unit_queue.popleft()
-        if not propagate_literal(instance, literal, unit_queue, trail):
+        literal, idx = unit_queue.popleft()
+        if not propagate_literal(instance, literal, unit_queue, bt, idx):
             return False 
     return True 
 
 
-def sat_solver(instance, unit_queue=None, trail=None):
+def sat_solver(instance, unit_queue=None, bt=None):
     if instance.is_satisfied():
         return "SAT", instance.assignment
     
     if unit_queue is None:
         unit_queue = find_init_unit_literals(instance)
-    if trail is None:
-        trail = []
+    if bt is None:
+        bt = BackTracker()
     
     # Run UP just once
-    result = unit_propagation(instance, unit_queue, trail)
+    result = unit_propagation(instance, unit_queue, bt)
     if not result:
         return "UNSAT", None
     if instance.is_satisfied():
@@ -89,17 +94,20 @@ def sat_solver(instance, unit_queue=None, trail=None):
     # Search for a variable to assign and backtrack if necessary
     var = next(iter(instance.unassigned_vars))
     for lit in (var, -var):
-        level = len(trail) # current decision level 
+        level = bt.current_level # TODO: change to jumping backtracking logic later
         unit_queue = deque() # reset unit literals for new branch
 
-        if propagate_literal(instance, lit, unit_queue, trail):
-            result, sol = sat_solver(instance, unit_queue, trail)
+        if propagate_literal(instance, lit, unit_queue, bt): # decision so None reason
+            result, sol = sat_solver(instance, unit_queue, bt)
             if result == "SAT":
                 return "SAT", sol
         
-        # Backtrack because no solution
-        while len(trail) > level:
-            instance.unassign(trail.pop())
+        # backtrack to target `level`
+        while bt.trail and bt.level[abs(bt.trail[-1])] > level:
+            lit = bt.delete_last()
+            instance.unassign(lit)
+
+        bt.current_level = level
 
     return "UNSAT", None
 
@@ -119,8 +127,8 @@ def main(args):
     
     try:
         instance = DimacsParser.parse_cnf_file(input_file)
-        if instance:
-            print(instance, end="")
+        # if instance:
+            # print(instance, end="")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -132,8 +140,14 @@ def main(args):
         "Instance": filename,
         "Time": f"{timer.getTime():.2f}",
         "Result": result,
-        "Solution": ' '.join(f"{lit} {str(solution[lit]).lower()}" for lit in sorted(solution.keys())),
     }
+
+    if result == "SAT":
+        printSol["Solution"] = ' '.join(
+            f"{lit} {str(solution[lit]).lower()}"
+            for lit in sorted(solution.keys())
+        )
+
     
     print(json.dumps(printSol))
 
