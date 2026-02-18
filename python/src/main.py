@@ -124,11 +124,10 @@ def main(args):
     except Exception as e:
         print(f"Error: {e}")
 
-    # TODO: call your solver here and get the result
     result, solution = sat_solver(instance)
     
     timer.stop()
-    
+
     printSol = {
         "Instance": filename,
         "Time": f"{timer.getTime():.2f}",

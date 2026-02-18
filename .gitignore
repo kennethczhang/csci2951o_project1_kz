@@ -3,3 +3,4 @@
 **/build
 **/python/input
 *.cnf
+.DS_Store
