@@ -10,11 +10,16 @@ Optimization plans:
 - No PLE in modern solvers??? Slow becuase of learned clauses and bad returns
     - Expensive from global scans, and doable without but complex w minimal return
 
-
 - backtracing logic
 
-- conflict driven clause learning (part of backtracking)
+------------------------------------------------------------------------------
 
+- conflict driven clause learning (part of backtracking)
+    - update unit queue
+    - update propogate literal
+    - finish bt stuff for main.py
+- clause learning
+- VSIDS
 
 backtracking later:
 - search heuristic can be

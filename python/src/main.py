@@ -3,16 +3,18 @@ from pathlib import Path
 from argparse import ArgumentParser
 from dimacs_parser import DimacsParser
 from model_timer import Timer
-from sat_instance import SATInstance
+from sat_instance import SATInstance, Clause
 from backtracker import BackTracker
 from collections import deque
 
 def propagate_literal(instance, literal, unit_queue, bt, reason=None):
     # First check if the literal is already assigned to False
     if instance.lit_value(literal) is False:
-        return False
+        if reason is not None:
+            return False, reason
+        return False, -1
     elif instance.lit_value(literal) is True:
-        return True
+        return True, None
 
     instance.assign(literal)
     if reason == None:
@@ -51,10 +53,10 @@ def propagate_literal(instance, literal, unit_queue, bt, reason=None):
         else:
             # No new watch found
             if other_watch_val is False:  # Conflict
-                return False
+                return False, ci
             unit_queue.append((other_watch_lit, ci)) # Otherwise unit (in place edit)
 
-    return True
+    return True, None
 
 
 def find_init_unit_literals(instance):
@@ -69,47 +71,141 @@ def unit_propagation(instance, unit_queue, bt):
     ''' Returns: True if no conflict found, False if conflict found'''
     while unit_queue:
         literal, idx = unit_queue.popleft()
-        if not propagate_literal(instance, literal, unit_queue, bt, idx):
-            return False 
-    return True 
+        valid, reason = propagate_literal(instance, literal, unit_queue, bt, idx)
+        if not valid:
+            return False, reason
+    return True, None
+
+
+def find_conflict_lits(instance, bt, conflict_clause_idx):
+    '''Creates learned conflict clause'''
+    conflict_lits = instance.clauses[conflict_clause_idx].lits.copy()
+    cur_level = bt.current_level
+
+    def cur_level_lits(lits):
+        clause_vars = {abs(l) for l in lits}
+        out = []
+        for t in reversed(bt.trail):  # t is the assigned literal (with its sign)
+            v = abs(t)
+            if v in clause_vars and bt.level[v] == cur_level:
+                # append the literal as it appears in the clause, not necessarily same sign as trail
+                # find that literal in lits:
+                for l in lits:
+                    if abs(l) == v:
+                        out.append(l)
+                        break
+        return out
+
+
+    uips = cur_level_lits(conflict_lits)# garuanteed non-empty
+
+    while len(uips) > 1:
+        lit_to_resolve = uips[0]
+        conflict_lits.remove(lit_to_resolve)
+
+        reason_idx = bt.reason[abs(lit_to_resolve)]
+        assert reason_idx is not None
+
+        reason_lits = instance.clauses[reason_idx].lits.copy()
+        reason_lits = [l for l in reason_lits if l != -lit_to_resolve]
+
+        conflict_lits.extend(reason_lits)
+
+        # Dedupe with order preservation
+        seen = set()
+        conflict_lits = [l for l in conflict_lits if not (l in seen or seen.add(l))]
+
+        # Need to recompute because new literals added
+        uips = cur_level_lits(conflict_lits)
+    
+    return conflict_lits
+
+
+def backtrack(instance, unit_queue, bt, conflict_clause_idx):
+    # print(instance)
+    # print(unit_queue)
+    # print(bt)
+    # print("------")
+    learned_lits = find_conflict_lits(instance, bt, conflict_clause_idx)
+    learned_clause = Clause(learned_lits, learned=True)
+
+    # # VSIDS: bump activities for literals involved in the conflict
+    # instance.bump_var_activity(learned_lits)
+
+    # Find backjump level (second highest level bc 1-UIP)
+    cur_level = bt.current_level
+
+    def cur_level_lits(lits):
+        clause_vars = {abs(l) for l in lits}
+        out = []
+        for t in reversed(bt.trail):  # t is the assigned literal (with its sign)
+            v = abs(t)
+            if v in clause_vars and bt.level[v] == cur_level:
+                # append the literal as it appears in the clause, not necessarily same sign as trail
+                # find that literal in lits:
+                for l in lits:
+                    if abs(l) == v:
+                        out.append(l)
+                        break
+        return out
+    
+    cur_lits = cur_level_lits(learned_lits)
+    # print(learned_clause)
+    # print(cur_lits)
+    # print(instance)
+    # print(unit_queue)
+    # print(bt)
+    
+    assert len(cur_lits) == 1, f"Expected 1 UIP lit, got {cur_lits}"
+    uip_lit = cur_lits[0]
+
+    other_levels = [
+        bt.level.get(abs(lit), 0)
+        for lit in learned_lits
+        if lit != uip_lit
+    ]
+
+    backjump_level = max(other_levels) if other_levels else 0
+
+    # Backtrack to the level
+    while bt.trail and bt.level[abs(bt.trail[-1])] > backjump_level:
+        lit = bt.delete_last()
+        instance.unassign(lit)
+    bt.current_level = backjump_level
+
+    # Add leanred clause to database
+    instance.add_clause(learned_clause)
+
+    # Unit propagate the learned clause
+    learned_clause_idx = len(instance.clauses) - 1
+    unit_queue.append((uip_lit, learned_clause_idx))
+
+    return
 
 
 def sat_solver(instance, unit_queue=None, bt=None):
-    if instance.is_satisfied():
-        return "SAT", instance.assignment
     
     if unit_queue is None:
         unit_queue = find_init_unit_literals(instance)
     if bt is None:
         bt = BackTracker()
-    
-    # Run UP just once
-    result = unit_propagation(instance, unit_queue, bt)
-    if not result:
-        return "UNSAT", None
-    if instance.is_satisfied():
-        return "SAT", instance.assignment
 
-    # If we reach here, we need to make a decision
-    # Search for a variable to assign and backtrack if necessary
-    var = next(iter(instance.unassigned_vars))
-    for lit in (var, -var):
-        level = bt.current_level # TODO: change to jumping backtracking logic later
-        unit_queue = deque() # reset unit literals for new branch
+    while True:
+        # Run UP just once
+        valid, reason = unit_propagation(instance, unit_queue, bt)
+        if not valid:
+            if bt.current_level == 0:
+                return "UNSAT", None
+            backtrack(instance, unit_queue, bt, reason)
+            continue
 
-        if propagate_literal(instance, lit, unit_queue, bt): # decision so None reason
-            result, sol = sat_solver(instance, unit_queue, bt)
-            if result == "SAT":
-                return "SAT", sol
-        
-        # backtrack to target `level`
-        while bt.trail and bt.level[abs(bt.trail[-1])] > level:
-            lit = bt.delete_last()
-            instance.unassign(lit)
+        if instance.is_satisfied():
+            return "SAT", instance.assignment
 
-        bt.current_level = level
-
-    return "UNSAT", None
+        # Make next decision
+        var = next(iter(instance.unassigned_vars))
+        lit = var
+        unit_queue.append((lit, None))
 
 
 def main(args):
@@ -156,33 +252,3 @@ if __name__ == "__main__":
     parser.add_argument("input_file", type=str)
     args = parser.parse_args()
     main(args)
-
-
-
-
-# def pure_literal_elimination(instance, unit_queue):
-#     ''' Returns: True if no conflict found, False if conflict found'''
-
-    
-#     solution = dict()
-
-#     cur_literals = set.union(*instance.clauses) if instance.clauses else set()
-#     one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
-#     while one_polarity_literals:
-#         literal = one_polarity_literals.pop()
-#         # Assign the literal to True and remove clauses satisfied by this literal
-#         instance.clauses = [clause for clause in instance.clauses if literal not in clause]
-#         instance.vars.remove(abs(literal)) 
-#         solution[abs(literal)] = literal > 0
-
-#         if not one_polarity_literals:
-#             # Recompute the set of literals and one-polarity literals after simplification
-#             cur_literals = set.union(*instance.clauses) if instance.clauses else set()
-#             one_polarity_literals = {lit for lit in cur_literals if -lit not in cur_literals}
-
-#     return instance, None, solution
-
-        # instance, result, ple_solution = pure_literal_elimination(instance)
-        # solution.update(ple_solution)
-        # if len(instance.clauses) == 0:
-        #     return "SAT", solution
